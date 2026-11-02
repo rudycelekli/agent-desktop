@@ -1,0 +1,52 @@
+name: Status snapshot version validation
+on:
+  push:
+    branches: ['validation/status-snapshot-version-20261102']
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+jobs:
+  baseline-witness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Restore only baseline production status reader
+        run: |
+          git show 9eb9b296192fcb70bda25e918cd6dd66abfa3d0d:crates/core/src/commands/status.rs > crates/core/src/commands/status.rs
+          cat >> crates/core/src/commands/status.rs <<'RUST'
+
+          #[cfg(test)]
+          #[path = "status_rollover_tests.rs"]
+          mod status_rollover_tests;
+          RUST
+      - name: Verify the nine-test baseline witness fails as expected
+        run: |
+          set +e
+          cargo +1.98.0 test --locked -p agent-desktop-core --lib commands::status::status_rollover_tests:: -- --nocapture > baseline.log 2>&1
+          result=$?
+          set -e
+          cat baseline.log
+          test "$result" -eq 101 || exit 1
+          grep -F 'code: SnapshotNotFound' baseline.log
+          if grep -F 'timed out waiting on channel' baseline.log; then exit 1; fi
+          grep -F 'running 9 tests' baseline.log
+          grep -F 'test result: FAILED. 6 passed; 3 failed;' baseline.log
+  fixed-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Run all native core library tests
+        run: cargo +1.98.0 test --locked -p agent-desktop-core --lib
